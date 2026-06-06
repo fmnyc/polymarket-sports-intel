@@ -204,4 +204,140 @@ export default function Home() {
   const [selected,setSelected]=useState(null);
   const [futureCross,setFutureCross]=useState([]);
   const [pastCross,setPastCross]=useState([]);
-  const [ready
+  const [ready,setReady]=useState(false);
+  const [isDemo,setIsDemo]=useState(false);
+
+  const enrich=useCallback(async(top25,live)=>{
+    const out=[];
+    for(let i=0;i<top25.length;i++){
+      const e=top25[i];
+      const addr=e.proxyWallet??e.address??e.wallet??`demo_${i}`;
+      if(live) setProgress(`Enriching trader ${i+1}/${top25.length}: ${shortAddr(addr)}…`);
+      const [prof,pos,act]=await Promise.allSettled([
+        live?fetchProfile(addr):Promise.resolve(null),
+        live?fetchPositions(addr):Promise.resolve(e.openPositions??[]),
+        live?fetchActivity(addr):Promise.resolve(e.activity??[]),
+      ]);
+      out.push({...e,address:addr,name:prof.value?.name??e.name??e.pseudonym??shortAddr(addr),avatar:prof.value?.profileImage??e.avatar??null,profit:e.profit??e.pnl??0,volume:e.volume??0,winRate:e.winRate??null,openPositions:(pos.value||[]).filter(p=>(p.size??0)>0.01),activity:act.value||[]});
+    }
+    return out;
+  },[]);
+
+  const loadLive=useCallback(async()=>{
+    setLoading(true);setError(null);setIsDemo(false);
+    setProgress("Fetching top 25 sports traders…");
+    try {
+      const lb=await fetchLeaderboard();
+      if(!lb.length) throw new Error("Leaderboard returned no data.");
+      const enriched=await enrich(lb.slice(0,25),true);
+      setTraders(enriched);setFutureCross(buildConsensus(enriched,"openPositions"));setPastCross(buildConsensus(enriched,"activity"));setReady(true);
+    } catch(e){setError(e.message);}
+    finally{setLoading(false);setProgress("");}
+  },[enrich]);
+
+  const loadDemo=useCallback(async()=>{
+    setLoading(true);setError(null);setIsDemo(true);setProgress("Loading demo data…");
+    await new Promise(r=>setTimeout(r,500));
+    const enriched=await enrich(DEMO_TRADERS,false);
+    setTraders(enriched);setFutureCross(buildConsensus(enriched,"openPositions"));setPastCross(buildConsensus(enriched,"activity"));setReady(true);
+    setLoading(false);setProgress("");
+  },[enrich]);
+
+  const totalProfit=traders.reduce((s,t)=>s+(t.profit||0),0);
+  const totalVolume=traders.reduce((s,t)=>s+(t.volume||0),0);
+  const avgWR=traders.filter(t=>t.winRate).reduce((s,t,_,a)=>s+t.winRate/a.length,0);
+  const TABS=[{id:"future",label:"🔮 Future Consensus",badge:futureCross.length},{id:"past",label:"📜 Past Consensus",badge:pastCross.length},{id:"traders",label:"🏆 Top 25 Traders",badge:traders.length}];
+
+  return <>
+    <Head><title>Polymarket Sports Intel</title></Head>
+    <div style={{minHeight:"100vh",background:"#080a0f"}}>
+      <div style={{background:"linear-gradient(180deg,#0d1420 0%,#080a0f 100%)",borderBottom:"1px solid rgba(0,230,150,0.15)",padding:"18px 18px 0",position:"sticky",top:0,zIndex:100}}>
+        <div style={{maxWidth:920,margin:"0 auto"}}>
+          <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:ready?12:18}}>
+            <div style={{width:40,height:40,borderRadius:10,flexShrink:0,background:"linear-gradient(135deg,#00e696 0%,#0052ff 100%)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20}}>⚡</div>
+            <div style={{flex:1}}>
+              <div style={{fontSize:18,fontWeight:700,letterSpacing:"-0.5px"}}>Polymarket Sports Intel</div>
+              <div style={{fontSize:11,color:"#555"}}>Top 25 Sports Traders · Cross-Reference Engine{isDemo&&<span style={{color:"#ff8c00",marginLeft:8}}>· DEMO</span>}</div>
+            </div>
+            {ready&&<button onClick={loadLive} style={{background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:6,padding:"6px 12px",color:"#aaa",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>↺ Refresh</button>}
+          </div>
+          {ready&&<div style={{display:"flex",gap:24,marginBottom:14,flexWrap:"wrap"}}>
+            {[["Volume",fmt$(totalVolume),"#aaa"],["Profit",(totalProfit>=0?"+":"")+fmt$(totalProfit),totalProfit>=0?"#00e696":"#ff4d6d"],["Avg WR",`${(avgWR*100).toFixed(0)}%`,"#7b8cff"],["Signals",futureCross.length,"#ff8c00"]].map(([l,v,c])=>(
+              <div key={l}><div style={{color:"#444",fontSize:9,letterSpacing:1,textTransform:"uppercase"}}>{l}</div><div style={{color:c,fontWeight:700,fontSize:15}}>{v}</div></div>
+            ))}
+          </div>}
+          {ready&&<div style={{display:"flex"}}>
+            {TABS.map(t=><button key={t.id} onClick={()=>setTab(t.id)} style={{background:"none",border:"none",cursor:"pointer",padding:"9px 14px",fontSize:12,fontFamily:"inherit",color:tab===t.id?"#00e696":"#555",borderBottom:tab===t.id?"2px solid #00e696":"2px solid transparent",fontWeight:tab===t.id?700:400,transition:"all 0.15s",whiteSpace:"nowrap"}}>{t.label}{t.badge>0&&<span style={{opacity:0.6,fontSize:10,marginLeft:4}}>({t.badge})</span>}</button>)}
+          </div>}
+        </div>
+      </div>
+
+      <div style={{maxWidth:920,margin:"0 auto",padding:"20px 16px"}}>
+        {!ready&&!loading&&!error&&<div style={{textAlign:"center",padding:"70px 20px"}}>
+          <div style={{fontSize:52,marginBottom:18}}>⚽🏀🏈🎾🏒</div>
+          <div style={{color:"#ccc",fontSize:17,fontWeight:700,marginBottom:10}}>Sports Prediction Intelligence</div>
+          <div style={{color:"#555",fontSize:13,maxWidth:480,margin:"0 auto 32px",lineHeight:1.7}}>Pull the top 25 sports bettors from Polymarket, analyze their open positions and trade history, then find where the experts agree.</div>
+          <div style={{display:"flex",gap:14,justifyContent:"center",flexWrap:"wrap"}}>
+            <button onClick={loadLive} style={{background:"linear-gradient(135deg,#00e696,#0052ff)",color:"#000",border:"none",borderRadius:8,padding:"13px 28px",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>⚡ Load Live Data</button>
+            <button onClick={loadDemo} style={{background:"rgba(255,255,255,0.06)",color:"#aaa",border:"1px solid rgba(255,255,255,0.1)",borderRadius:8,padding:"13px 28px",fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>🎯 Demo Mode</button>
+          </div>
+        </div>}
+
+        {loading&&<div style={{textAlign:"center",padding:"70px 20px"}}>
+          <div style={{width:38,height:38,border:"3px solid rgba(0,230,150,0.2)",borderTopColor:"#00e696",borderRadius:"50%",margin:"0 auto 18px",animation:"spin 0.8s linear infinite"}}/>
+          <div style={{color:"#00e696",fontSize:13}}>{progress}</div>
+        </div>}
+
+        {error&&!loading&&<div style={{background:"rgba(255,77,109,0.07)",border:"1px solid rgba(255,77,109,0.2)",borderRadius:12,padding:22}}>
+          <div style={{color:"#ff4d6d",fontWeight:700,marginBottom:8}}>⚠️ API Error</div>
+          <div style={{color:"#ccc",fontSize:13,marginBottom:12}}>{error}</div>
+          <div style={{display:"flex",gap:10}}>
+            <button onClick={loadLive} style={{background:"rgba(255,77,109,0.2)",color:"#ff4d6d",border:"1px solid rgba(255,77,109,0.3)",borderRadius:6,padding:"7px 14px",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>↺ Retry</button>
+            <button onClick={loadDemo} style={{background:"rgba(255,255,255,0.06)",color:"#aaa",border:"1px solid rgba(255,255,255,0.1)",borderRadius:6,padding:"7px 14px",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>🎯 Demo</button>
+          </div>
+        </div>}
+
+        {ready&&tab==="future"&&<div>
+          <div style={{marginBottom:16}}><div style={{color:"#00e696",fontWeight:700,fontSize:16,marginBottom:4}}>🔮 Active Open Positions — Consensus Signals</div><div style={{color:"#555",fontSize:12,lineHeight:1.6}}>Live markets where 2+ of the top 25 sports traders currently hold positions.</div></div>
+          {futureCross.length===0?<div style={{color:"#555",textAlign:"center",padding:50}}>No overlapping open positions found.</div>:futureCross.map((b,i)=><ConsensusCard key={i} bet={b} type="future"/>)}
+        </div>}
+
+        {ready&&tab==="past"&&<div>
+          <div style={{marginBottom:16}}><div style={{color:"#7b8cff",fontWeight:700,fontSize:16,marginBottom:4}}>📜 Historical Play Overlap</div><div style={{color:"#555",fontSize:12,lineHeight:1.6}}>Past markets where multiple top 25 traders participated.</div></div>
+          {pastCross.length===0?<div style={{color:"#555",textAlign:"center",padding:50}}>No overlapping past plays found.</div>:pastCross.map((b,i)=><ConsensusCard key={i} bet={b} type="past"/>)}
+        </div>}
+
+        {ready&&tab==="traders"&&<div style={{display:"grid",gridTemplateColumns:selected?"1fr 1fr":"1fr",gap:16,alignItems:"start"}}>
+          <div>
+            <div style={{color:"#444",fontSize:11,marginBottom:10}}>Click any trader to inspect their positions</div>
+            {traders.map((t,i)=><TraderRow key={t.address} trader={t} rank={i+1} onClick={x=>setSelected(s=>s?.address===x.address?null:x)} selected={selected?.address===t.address}/>)}
+          </div>
+          {selected&&<div style={{background:"rgba(255,255,255,0.02)",border:"1px solid rgba(255,255,255,0.07)",borderRadius:12,padding:18,position:"sticky",top:100,maxHeight:"80vh",overflowY:"auto"}}>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
+              <Avatar trader={selected} size={44}/>
+              <div style={{flex:1}}><div style={{color:"#fff",fontWeight:700,fontSize:16}}>{selected.name}</div><div style={{color:"#444",fontSize:10,marginTop:2}}>{selected.address}</div></div>
+              <button onClick={()=>setSelected(null)} style={{background:"none",border:"none",color:"#555",cursor:"pointer",fontSize:22}}>✕</button>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:18}}>
+              {[["Profit",(selected.profit>=0?"+":"")+fmt$(selected.profit),selected.profit>=0?"#00e696":"#ff4d6d"],["Volume",fmt$(selected.volume),"#aaa"],["Win Rate",selected.winRate!=null?`${(selected.winRate*100).toFixed(0)}%`:"—","#7b8cff"],["Open Pos",selected.openPositions?.length??0,"#ff8c00"]].map(([l,v,c])=>(
+                <div key={l} style={{background:"rgba(255,255,255,0.04)",borderRadius:8,padding:"10px 12px"}}><div style={{color:"#444",fontSize:9,letterSpacing:1,textTransform:"uppercase",marginBottom:3}}>{l}</div><div style={{color:c,fontWeight:700,fontSize:16}}>{v}</div></div>
+              ))}
+            </div>
+            <div style={{color:"#444",fontSize:10,letterSpacing:1,fontWeight:700,marginBottom:8}}>OPEN POSITIONS ({selected.openPositions?.length??0})</div>
+            {selected.openPositions?.length>0?selected.openPositions.map((p,i)=><PositionLine key={i} p={p}/>):<div style={{color:"#333",fontSize:12,textAlign:"center",padding:"16px 0"}}>No open positions</div>}
+            {selected.activity?.length>0&&<>
+              <div style={{color:"#444",fontSize:10,letterSpacing:1,fontWeight:700,marginTop:18,marginBottom:8}}>RECENT ACTIVITY</div>
+              {selected.activity.slice(0,6).map((a,i)=>(
+                <div key={i} style={{padding:"7px 0",borderBottom:"1px solid rgba(255,255,255,0.04)",display:"flex",gap:8,alignItems:"center"}}>
+                  <span style={{padding:"2px 7px",borderRadius:4,fontSize:10,fontWeight:700,flexShrink:0,background:"rgba(123,140,255,0.12)",color:"#7b8cff"}}>{a.outcome||a.side||"?"}</span>
+                  <span style={{color:"#bbb",fontSize:11,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a.title??a.question??a.conditionId??"—"}</span>
+                  {a.profit>0&&<span style={{color:"#00e696",fontSize:10,flexShrink:0}}>+{fmt$(a.profit)}</span>}
+                </div>
+              ))}
+            </>}
+          </div>}
+        </div>}
+      </div>
+    </div>
+  </>;
+}
